@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Better Tab Unload Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <div>
+        <h1>Better Tab Unload</h1>
+        <p class="subtitle">Saved screenshots used while discarded tabs reload.</p>
+      </div>
+      <div class="actions">
+        <button id="refresh-button" type="button">Refresh</button>
+        <button id="clear-button" type="button" class="danger">Clear All</button>
+      </div>
+    </header>
+
+    <section class="summary">
+      <div class="stat-card">
+        <div class="stat-label">Stored Screenshots</div>
+        <div id="count-value" class="stat-value">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Approximate Storage</div>
+        <div id="size-value" class="stat-value">0 B</div>
+      </div>
+    </section>
+
+    <p id="status-text" class="status">Loading screenshots...</p>
+    <p id="empty-state" class="empty" hidden>No screenshots captured yet.</p>
+
+    <section id="screenshot-grid" class="grid"></section>
+  </main>
+
+  <script src="storage.js" defer></script>
+  <script src="options.js" defer></script>
+</body>
+</html>

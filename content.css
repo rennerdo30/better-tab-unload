@@ -1,0 +1,21 @@
+/* Overlay styles for Better Tab Unload */
+
+.better-tab-unload-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483647 !important; /* Maximum z-index */
+  background-color: #fff !important;
+  background-size: 100% auto !important;
+  background-position: top left !important;
+  background-repeat: no-repeat !important;
+  opacity: 1 !important;
+  pointer-events: none !important; /* Allow clicks to pass through */
+  transition: opacity 0.3s ease-out !important;
+}
+
+.better-tab-unload-overlay.better-tab-unload-fade-out {
+  opacity: 0 !important;
+}

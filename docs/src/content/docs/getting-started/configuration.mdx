@@ -1,0 +1,117 @@
+---
+title: Configuration
+description: Every tunable constant in Better Tab Unload, where it lives, and what changing it does.
+---
+
+Better Tab Unload has **no settings UI and no environment variables**. It is a local
+browser extension: there is no server, no config file, and no `chrome.storage`-backed
+preferences. The options page is a viewer — it lists and deletes stored screenshots, it
+does not change behaviour.
+
+Everything tunable is a named constant at the top of a source file. To change it, edit the
+file and reload the extension from `chrome://extensions`.
+
+## The debug switch
+
+```js title="background.js"
+const DEBUG_LOGS = false;
+```
+
+```js title="content.js"
+const DEBUG_LOGS = false;
+```
+
+`DEBUG_LOGS` is shipped as `false` and is opt-in. When enabled it writes a detailed trace
+of the restore state machine to the service worker console, and the content script forwards
+its own events to the service worker via `CONTENT_DEBUG_LOG` messages so everything lands
+in one place.
+
+:::caution
+Debug logs include the **full URL** of every tab the extension touches, with timestamps.
+That is your browsing history. Enable it only while diagnosing a problem, turn it back off
+afterwards, and never paste raw logs into an issue without redacting them. See
+[Privacy](/better-tab-unload/guides/privacy/).
+:::
+
+Both flags must be set to `true` together to get a complete trace — they control two
+different execution contexts. Always-on messages (`serviceWorkerStarted`, and warnings
+such as `cleanupFailed`) deliberately contain no URLs.
+
+## Capture behaviour
+
+Defined in `background.js` unless noted otherwise.
+
+| Constant | Default | Effect |
+| --- | --- | --- |
+| `CAPTURE_COOLDOWN_MS` | `1200` | Minimum gap between two captures of the same tab. Prevents hitting Chrome's `captureVisibleTab` rate limit, since the extension schedules several capture attempts per navigation. |
+| `TAB_CACHE_MAX_AGE_MS` | `30 * 60 * 1000` | How long the in-memory, per-tab screenshot cache stays valid. This is only the hot cache in front of IndexedDB, not the persisted lifetime. |
+| `SESSION_REHYDRATE_DELAY_MS` | `600` | Delay after `runtime.onStartup` / `runtime.onInstalled` before scanning all open tabs to re-inject the content script. |
+
+Screenshots are captured as JPEG at quality `90`, hardcoded in the `captureVisibleTab`
+call inside `captureAndStore()`. Capture only runs when the tab is active, its status is
+`complete`, it is not discarded, its window is not minimized, and its URL is not skipped.
+
+Because `captureVisibleTab` can only photograph the *currently visible* tab, capture is
+retried at several offsets after a navigation completes or a tab is activated (for example
+600 ms / 1800 ms / 3500 ms after `status === 'complete'`). Those arrays live next to the
+event handlers in `background.js`.
+
+## Restore timing
+
+| Constant | File | Default | Effect |
+| --- | --- | --- | --- |
+| `RELOAD_STATE_MAX_MS` | `background.js` | `15 * 1000` | How long a tab stays marked as "reloading after discard" before all transient state for it is dropped. |
+| `RELOAD_KICKOFF_MAX_MS` | `background.js` | `5000` | Minimum interval between forced `chrome.tabs.reload()` attempts for the same tab. |
+| `MIN_VISIBLE_MS` | `restore.js` | `100` | How long the interstitial holds the screenshot on screen before navigating to the real URL. |
+| `NAVIGATION_FAILSAFE_MS` | `restore.js` | `2000` | If the screenshot lookup hangs, the interstitial navigates to the target anyway after this timeout, so a tab can never get stuck on the placeholder. |
+| `POST_LOAD_HOLD_MS` | `content.js` | `100` | How long the overlay stays up after the document reaches `complete`, avoiding a flash of unpainted page. |
+| `OVERLAY_FADE_MS` | `content.js` | `140` | Duration of the overlay fade-out. Must stay in sync with the transition in `content.css`. |
+
+The content script also has two hard safety limits so an overlay can never become
+permanent: it auto-removes after 6 seconds, and a final `setTimeout` tears down any
+surviving overlay after 12 seconds.
+
+`restore.js` only ever navigates to `http:` and `https:` targets
+(`ALLOWED_TARGET_PROTOCOLS`). Anything else is refused, so the `target` query parameter of
+the interstitial cannot be abused to send a tab to a `javascript:` or `data:` URL.
+
+## Storage
+
+Defined in `storage.js`:
+
+| Constant | Default | Effect |
+| --- | --- | --- |
+| `DB_NAME` | `'BetterTabUnload'` | IndexedDB database name. |
+| `DB_VERSION` | `2` | Schema version. Bump when adding an object store. |
+| `STORE_NAME` | `'screenshots'` | Screenshots keyed by normalized URL. |
+| `TAB_STORE_NAME` | `'tabScreenshots'` | Screenshots keyed by tab ID, used when a tab's URL cannot be matched. |
+| `MAX_AGE_MS` | `7 * 24 * 60 * 60 * 1000` | Retention. Anything older is deleted by the hourly cleanup pass. |
+
+Cleanup runs on service worker startup and then every hour. It deduplicates URL-keyed
+records down to one entry per canonical URL, then deletes records older than `MAX_AGE_MS`
+from both stores. Per-tab records are also deleted immediately on `chrome.tabs.onRemoved`.
+
+There is no size cap, only an age cap. A heavy browsing week can leave a sizeable
+database; the options page shows the approximate total, and **Clear All** empties both
+stores.
+
+## Skipped URLs
+
+`SKIP_URL_PATTERNS` in `background.js` is the single place that decides which pages the
+extension ignores entirely — no capture, no storage, no overlay:
+
+```js
+const SKIP_URL_PATTERNS = [
+  /^chrome:\/\//,
+  /^chrome-extension:\/\//,
+  /^about:/,
+  /^edge:\/\//,
+  /^brave:\/\//,
+  /^devtools:\/\//,
+  /^view-source:/,
+  /^file:\/\//
+];
+```
+
+Add a pattern here to exclude further origins. Note that this is a URL-scheme filter, not
+a per-site blocklist — there is currently no way to exclude an individual website.

@@ -1,0 +1,77 @@
+---
+title: Installation
+description: Load Better Tab Unload as an unpacked Chrome extension and verify it is working.
+---
+
+Better Tab Unload is not on the Chrome Web Store. You load it as an unpacked extension
+from a local checkout.
+
+## Requirements
+
+- Chrome, Edge, Brave, or another Chromium browser with Manifest V3 support.
+- Nothing to compile. The extension is plain JavaScript, HTML, and CSS with no build step
+  and no runtime dependencies.
+- Node.js is only needed if you want to build the documentation site or run the syntax
+  checks.
+
+## Load the extension
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/rennerdo30/better-tab-unload.git
+   ```
+
+2. Open `chrome://extensions`.
+3. Enable **Developer mode** (top right).
+4. Click **Load unpacked** and select this project folder — the directory containing
+   `manifest.json`.
+
+Chrome only reads the files referenced by `manifest.json`. The `docs/` and `.github/`
+directories in the repository are ignored by the browser, so you can load the checkout
+as-is.
+
+## Permissions it asks for
+
+`manifest.json` requests the following, and each one is load-bearing:
+
+| Permission | Why it is needed |
+| --- | --- |
+| `tabs` | Read tab state (`discarded`, `status`, `url`, `pendingUrl`) and detect when a discarded tab is reactivated. |
+| `activeTab` | Capture the visible pixels of the active tab. |
+| `scripting` | Re-inject the content script into already-open tabs after the service worker starts, since content scripts are not retro-injected on install or browser restart. |
+| `host_permissions: <all_urls>` | `captureVisibleTab` and the overlay must work on any site you visit, not a fixed allowlist. |
+
+## Verify it works
+
+1. Open a normal website and let it fully load.
+2. Switch to another tab, and wait a moment so the screenshot capture can run.
+3. Force the first tab to be discarded: open `chrome://discards`, find the tab, and click
+   **Urgent Discard**. (Waiting for real memory pressure also works, but is slow.)
+4. Switch back to the discarded tab. You should briefly see the previous rendering of the
+   page instead of a blank white screen.
+
+To confirm screenshots are actually being stored, open the extension's options page
+(**Details → Extension options** on `chrome://extensions`). It lists every stored
+screenshot with its URL, capture time, and an approximate total storage size.
+
+If the placeholder never appears, see
+[Troubleshooting](/better-tab-unload/guides/troubleshooting/).
+
+## Syntax checks
+
+There is no test suite. The repository ships a syntax check for the extension sources:
+
+```bash
+npm run check
+```
+
+which is equivalent to:
+
+```bash
+node --check background.js
+node --check content.js
+node --check restore.js
+node --check storage.js
+node --check options.js
+```

@@ -1,0 +1,135 @@
+---
+title: How It Works
+description: The capture path, the two restore paths, and the guards that keep tab URLs from being corrupted.
+---
+
+## Components
+
+| File | Context | Responsibility |
+| --- | --- | --- |
+| `manifest.json` | — | MV3 declaration: permissions, service worker, content script, options page. |
+| `background.js` | Service worker | Capture scheduling, discard detection, restore orchestration, message routing. |
+| `storage.js` | Service worker + options page | IndexedDB wrapper, exposed as `self.storage`. |
+| `content.js` / `content.css` | Every page, `document_start` | Overlay fallback drawn on top of a loading page. |
+| `restore.html` / `restore.js` / `restore.css` | Extension page | The restore interstitial. |
+| `options.html` / `options.js` / `options.css` | Extension page | Screenshot viewer, delete and clear-all. |
+
+`storage.js` attaches its API to `self.storage`, which is why the same file works both as
+a service worker `importScripts()` target and as a plain `<script>` on the options page.
+
+## Capture path
+
+1. A tab becomes active, or a navigation reaches `status === 'complete'`.
+2. `captureAndStore(tabId)` is scheduled at several offsets, because the visible pixels are
+   often still incomplete right at the `complete` event.
+3. It bails out unless the tab is active, complete, not discarded, in a non-minimized
+   window, and on a non-skipped URL. It also honours `CAPTURE_COOLDOWN_MS`.
+4. `chrome.tabs.captureVisibleTab` returns a JPEG data URL.
+5. The data URL is written twice — once under the normalized URL
+   (`saveScreenshotForUrlVariants`) and once under the tab ID (`saveTabScreenshot`) — and
+   also placed in the in-memory `recentTabScreenshots` cache.
+
+### URL normalization
+
+The same page can be addressed as `example.com/a`, `example.com/a/`, and
+`example.com/a#section`. `normalizeScreenshotUrl()` strips the fragment and drops a
+trailing slash when there is no query string, producing one canonical key.
+`buildUrlCandidates()` then generates the plausible variants, and lookups try each in turn,
+so a screenshot survives small differences between the URL at capture time and the URL at
+restore time. When saving, the variant keys are deleted so only the canonical record
+remains.
+
+## Restore path A: the interstitial
+
+This is the preferred path, because it paints before the target page starts loading.
+
+1. Discard is detected — either `chrome.tabs.onActivated` on a tab whose `discarded` flag
+   is set, or `chrome.tabs.onUpdated` reporting `discarded: false` (the reactivation edge).
+2. `markDiscardedReload()` opens a trace, marks the tab as reloading, and starts the
+   `RELOAD_STATE_MAX_MS` expiry timer. Repeated events within 250 ms for the same URL are
+   deduplicated.
+3. `prepareRestoreScreenshot()` resolves a screenshot: in-memory cache → tab-keyed record →
+   URL-keyed record.
+4. `maybeShowRestoreInterstitial()` navigates the tab to
+   `restore.html?tabId=…&target=…&traceId=…`.
+5. `restore.js` asks the service worker for the screenshot
+   (`GET_RESTORE_INTERSTITIAL_DATA`), sets it as a background image, waits for two animation
+   frames to guarantee it is painted, then calls `window.location.replace(target)`.
+
+`replace()` rather than `assign()` keeps the interstitial out of the tab's history, so the
+Back button behaves normally.
+
+## Restore path B: the content-script overlay
+
+Used when the interstitial is not viable — for example the tab is not active, or Chrome has
+already begun its own navigation.
+
+- `content.js` runs at `document_start` and polls the service worker with
+  `REQUEST_SCREENSHOT_OVERLAY` (up to 40 attempts, 40 ms apart) while the document is still
+  loading.
+- In parallel, `background.js` pushes `SHOW_SCREENSHOT_OVERLAY` at a spread of delays
+  (`0, 50, 120, 220, 380, 600` ms) to catch the content script as soon as it exists.
+  `overlaySentForReload` ensures only one overlay is actually shown.
+- The overlay is a fixed-position `div` with the screenshot as its background image,
+  inserted as the first child of `<body>` (or `<html>` if the body does not exist yet).
+- It is removed once `readyState` is `complete`, after `POST_LOAD_HOLD_MS`, with an
+  `OVERLAY_FADE_MS` fade. `HIDE_SCREENSHOT_OVERLAY` is sent three times (100/180/300 ms) so
+  a single dropped message cannot leave the overlay stuck.
+
+The two paths are mutually exclusive: if a tab went through the interstitial,
+`restoreInterstitialByTab` is set and the overlay request is answered with
+`skip-after-restore-interstitial`, so you never get two placeholders for one restore.
+
+## The stale-URL problem
+
+The subtle failure mode this codebase spends most of its guards on: **`tab.url` is only the
+last *committed* URL.** While a navigation is pending — which is exactly the situation during
+Chrome's session restore after a browser restart — `tab.url` still reports an older history
+entry and the real destination is in `tab.pendingUrl`.
+
+Naively reading `tab.url` and navigating the tab there would overwrite the tab with a stale
+URL, effectively corrupting the user's session. The mitigations:
+
+- `tabEffectiveUrl(tab)` returns `tab.pendingUrl || tab.url`, and every restore target is
+  derived from it.
+- `maybeShowRestoreInterstitial()` refuses to navigate if the tab's current URL no longer
+  matches the captured target (`skip-url-mismatch`), if the tab has already finished loading
+  (`skip-target-already-complete`), or if the tab is not active.
+- `ensureReloadKickoff()` refuses to reload when `tab.pendingUrl` is set
+  (`skip-pending-navigation`) or when the tab is already loading, because reloading would
+  cancel Chrome's own navigation and re-commit the stale entry.
+- `rehydrateSessionTabs()` skips any discarded tab that Chrome has already started restoring.
+
+## Session rehydration
+
+Content scripts are not injected into tabs that were already open when the service worker
+starts. On `runtime.onStartup` and `runtime.onInstalled`, `rehydrateSessionTabs()` walks
+every tab, pings it with `BTU_PING`, and uses `chrome.scripting.executeScript` /
+`insertCSS` to inject `content.js` and `content.css` where the ping went unanswered. This
+is the only reason the `scripting` permission is required.
+
+## Message protocol
+
+| Message | Direction | Purpose |
+| --- | --- | --- |
+| `BTU_PING` | background → content | Liveness probe before injecting. |
+| `SHOW_SCREENSHOT_OVERLAY` | background → content | Display the overlay with a screenshot. |
+| `HIDE_SCREENSHOT_OVERLAY` | background → content | Begin overlay teardown. |
+| `REQUEST_SCREENSHOT_OVERLAY` | content → background | Ask for a screenshot while loading. |
+| `GET_RESTORE_INTERSTITIAL_DATA` | interstitial → background | Fetch the screenshot for `restore.html`. |
+| `CONTENT_DEBUG_LOG` | content / interstitial → background | Forward debug events into the service worker console. |
+
+## Development
+
+There is no build step and no test suite. Edit a file, click the reload icon on
+`chrome://extensions`, and re-run your repro. Before committing, run `npm run check`
+(`node --check` on each source file) to catch syntax errors.
+
+The documentation site in `docs/` is a separate Astro Starlight project. From the repository
+root:
+
+```bash
+npm run install:docs   # install the docs dependencies
+npm run dev            # local docs preview
+npm run build          # production build into docs/dist
+```

@@ -1,0 +1,66 @@
+---
+title: Privacy
+description: What Better Tab Unload stores, where it stays, and the one thing you have to be careful about.
+---
+
+This extension screenshots the pages you browse. That deserves a straight answer about
+where those screenshots go.
+
+## Nothing leaves your machine
+
+Screenshots and URLs are stored **only** in the extension's local IndexedDB database
+(`BetterTabUnload`) inside your own browser profile. There is no backend, no telemetry, no
+analytics, and no sync.
+
+This is verifiable rather than a promise: the extension source contains no `fetch`, no
+`XMLHttpRequest`, no `WebSocket`, no `navigator.sendBeacon`, and no external URL of any
+kind. `manifest.json` declares no remote hosts to connect to — `host_permissions` is
+present so the extension can *read pixels from* and *inject an overlay into* the pages you
+visit, not to talk to them.
+
+## What is stored
+
+| Data | Where | Retention |
+| --- | --- | --- |
+| JPEG screenshot of the visible area of tabs you view | IndexedDB store `screenshots`, keyed by normalized URL | Deleted after 7 days by the hourly cleanup |
+| The same screenshot keyed by tab ID, plus its URL | IndexedDB store `tabScreenshots` | Deleted when the tab closes, or after 7 days |
+| Recent screenshots for open tabs | Service worker memory | Dropped after 30 minutes, or when the worker restarts |
+
+Screenshots are captured only from tabs that are **active and fully loaded**. Pages under
+`chrome://`, `chrome-extension://`, `about:`, `edge://`, `brave://`, `devtools://`,
+`view-source:`, and `file://` are skipped entirely.
+
+Because a screenshot is a picture of the rendered page, it can contain anything that was on
+screen: logged-in account names, email subject lines, private messages, document contents.
+Treat the database as sensitive.
+
+## Incognito and private windows
+
+The extension is not enabled in Incognito unless you explicitly allow it on
+`chrome://extensions`. Leave that off, and Incognito browsing is never captured.
+
+## Deleting the data
+
+- **Options page** — lists every stored screenshot with its URL and capture time. Delete
+  individual entries, or **Clear All** to empty both object stores immediately.
+- **Uninstalling the extension** removes its IndexedDB database along with it.
+
+## The one real hazard: debug logs
+
+`DEBUG_LOGS` is shipped as `false` specifically because of this.
+
+When you turn it on, the service worker console records the **full URL of every tab the
+extension touches, with an ISO timestamp**. That is a browsing history log, in plain text,
+sitting in a DevTools console. If you save it to a file, you have written your browsing
+history to disk.
+
+If you enable it to diagnose something:
+
+- Turn it back off when you are done.
+- Write any saved console output to the repository's `logs/` directory, which is
+  gitignored. Never save it to the repository root.
+- Redact URLs before sharing a log in a bug report or pasting it anywhere.
+
+Log files (`*.log`, `console-*.log`) and the whole `logs/` directory are excluded by
+`.gitignore` so that an accidental `git add .` cannot commit them. That is a safety net,
+not a reason to be careless — a file you have already pushed cannot be unpublished.

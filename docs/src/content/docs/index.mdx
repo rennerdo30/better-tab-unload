@@ -1,0 +1,50 @@
+---
+title: Better Tab Unload
+description: Chrome extension that shows a cached screenshot while a discarded tab is restored.
+---
+
+Chrome's Memory Saver silently *discards* background tabs to free RAM. The tab strip
+still shows the tab, but the page behind it is gone. When you click back to it, you get
+a blank white page while Chrome re-fetches and re-renders everything — often for a
+second or more.
+
+**Better Tab Unload** fills that gap. It keeps a recent screenshot of each tab you visit
+and paints it back into the tab while the real page reloads, so switching to a discarded
+tab looks instant instead of looking broken.
+
+## What it does
+
+- **Captures** a JPEG screenshot of the active tab shortly after it finishes loading,
+  using `chrome.tabs.captureVisibleTab`.
+- **Stores** screenshots in IndexedDB, keyed both by normalized URL and by tab ID.
+- **Detects** when a discarded tab is being reactivated, via `chrome.tabs.onActivated`
+  and `chrome.tabs.onUpdated`.
+- **Shows** the cached screenshot immediately through a short-lived interstitial page
+  (`restore.html`), then navigates to the real URL.
+- **Falls back** to a content-script overlay drawn on top of the loading page, for the
+  cases where the interstitial cannot be used.
+- **Removes** the placeholder as soon as the real document reaches `readyState`
+  `complete`, with a short fade so the swap is not jarring.
+- **Cleans up** automatically: screenshots older than 7 days are deleted, duplicates are
+  collapsed, and per-tab entries are dropped when the tab closes.
+
+## What it deliberately does not do
+
+- It does not discard or unload tabs itself. Chrome decides that; this extension only
+  improves what you see when a discarded tab comes back.
+- It does not send anything anywhere. There is no server, no analytics, and no network
+  code at all — see [Privacy](/better-tab-unload/guides/privacy/).
+- It does not capture `chrome://`, `chrome-extension://`, `about:`, `devtools://`,
+  `view-source:`, or `file://` pages. Those URLs are skipped everywhere in the codebase.
+
+## Status
+
+This is an unpacked developer-mode extension (Manifest V3, version 1.0.1). It is not
+published on the Chrome Web Store. Install it by loading the folder yourself — see
+[Installation](/better-tab-unload/getting-started/installation/).
+
+Restoring a discarded tab depends on timing behaviour that differs between Chrome
+versions and between "switch to a discarded tab" and "restore a whole session after a
+browser restart". The code carries explicit guards for the session-restore case, but
+expect the occasional miss where the placeholder does not appear and you simply get
+Chrome's normal blank reload.

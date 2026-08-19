@@ -1,0 +1,18 @@
+/**
+ * Custom colors for Galaxy theme
+ * Based on renner.dev - Orange (#f97316) and Cyan (#22d3ee)
+ */
+
+/* Dark mode - Orange accent */
+:root {
+  --sl-color-accent-low: hsl(25, 54%, 15%);
+  --sl-color-accent: hsl(25, 95%, 53%);
+  --sl-color-accent-high: hsl(25, 93%, 78%);
+}
+
+/* Light mode - Orange accent (adjusted for contrast) */
+:root[data-theme='light'] {
+  --sl-color-accent-low: hsl(25, 90%, 92%);
+  --sl-color-accent: hsl(25, 95%, 45%);
+  --sl-color-accent-high: hsl(25, 80%, 25%);
+}

@@ -1,0 +1,106 @@
+---
+title: Troubleshooting
+description: Reproduce a restore, collect a trace safely, and map symptoms to the log events that explain them.
+---
+
+## Reproduce a discard
+
+1. Open a normal website tab and let it fully load.
+2. Switch to another tab and wait a couple of seconds, so the scheduled captures can run.
+3. Discard the first tab: open `chrome://discards`, find the tab, click **Urgent Discard**.
+4. Switch back to it and watch what happens.
+
+## Collect a trace
+
+1. Set `DEBUG_LOGS = true` in **both** `background.js` and `content.js`.
+2. Reload the extension on `chrome://extensions`.
+3. Under **Better Tab Unload**, click the **Service worker** link in *Inspect views*.
+4. Keep that console open while you reproduce the problem. Content-script and interstitial
+   events are forwarded here too, so this one console shows the whole flow.
+5. If you need to save the output, right-click the console and use *Save as…* into the
+   repository's gitignored `logs/` directory, for example `logs/restore-trace.log`.
+
+:::danger
+Service-worker debug logs contain the **full URL of every tab**, with timestamps — your
+browsing history in plain text. Keep saved logs inside `logs/` (gitignored), redact URLs
+before sharing them, and set `DEBUG_LOGS` back to `false` when you are finished. Never save
+logs to the repository root.
+:::
+
+## Expected happy-path event order
+
+With both debug flags on, a successful interstitial restore looks like this:
+
+1. `onUpdated:discarded-true`
+2. `markDiscardedReload`
+3. `prepareRestoreScreenshot:loaded`
+4. `restoreInterstitial:shown`
+5. `CS:restore:start`
+6. `GET_RESTORE_INTERSTITIAL_DATA:reply` with `hasScreenshot: true`
+7. `CS:restore:screenshot-hit`
+8. `CS:restore:navigate`
+9. Target page `onUpdated` to `loading`, then `complete`
+10. `REQUEST_SCREENSHOT_OVERLAY:skip-after-restore-interstitial` — confirming no second
+    placeholder was drawn
+
+## Useful greps
+
+Run these against a log you saved in `logs/`:
+
+```bash
+# restore flow
+grep -n "restoreInterstitial\|CS:restore\|GET_RESTORE_INTERSTITIAL_DATA\|REQUEST_SCREENSHOT_OVERLAY" logs/*.log
+```
+
+```bash
+# teardown
+grep -n "onUpdated:complete\|hideOverlayInTab\|overlay-removed\|message-hide" logs/*.log
+```
+
+```bash
+# anything the state machine refused to do
+grep -n "send-failed\|timeout\|skip" logs/*.log
+```
+
+## Symptom checklist
+
+### The placeholder never appears
+
+- Compare `prepareRestoreScreenshot:loaded` against `prepareRestoreScreenshot:missing`. A
+  `missing` means no screenshot was ever stored for that URL.
+- Open the options page and check whether a screenshot for that URL exists at all. If not,
+  the capture side is the problem, not the restore side: the tab may never have been active
+  and `complete` long enough, or its URL is in `SKIP_URL_PATTERNS`.
+- Look for `captureAndStore:failed`. Chrome rate-limits `captureVisibleTab`, and captures
+  are also refused for minimized windows.
+
+### The placeholder appears too late
+
+- Many `pushOverlayToTab:send-failed` entries before the first `CS:request-overlay` mean the
+  content script was not ready yet, so the overlay fallback lost the race.
+- Check whether `restoreInterstitial:shown` is present. If it is missing, the fast path did
+  not run — look for the reason: `skip-inactive-tab`, `skip-url-mismatch`, or
+  `skip-target-already-complete`.
+
+### The placeholder stays on screen
+
+- Confirm `onUpdated:complete` fires for the target URL.
+- Confirm `message-hide` and `overlay-removed` both appear. If `message-hide` is missing,
+  all three `HIDE_SCREENSHOT_OVERLAY` attempts failed.
+- Worst case the safety timers in `content.js` clear it after 6 and 12 seconds; seeing
+  `overlay-safety-timeout` means normal teardown did not happen.
+
+### A restored tab lands on the wrong page
+
+This is the stale-URL failure mode described in
+[How It Works](/better-tab-unload/guides/architecture/). Look for `skip-url-mismatch`,
+`skip-pending-navigation`, and `skip-tab-being-restored`: those guards *preventing* a
+navigation is the correct behaviour. If a tab genuinely ends up on a previous history entry,
+capture the `markDiscardedReload` and `restoreInterstitial:shown` lines with their
+`currentUrl` and `targetUrl` values — that pair identifies which guard was missing.
+
+## Reset state
+
+1. Open the options page and click **Clear All**.
+2. Reload the extension from `chrome://extensions`.
+3. Re-run the repro to capture a clean trace.

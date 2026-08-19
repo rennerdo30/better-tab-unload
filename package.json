@@ -1,0 +1,22 @@
+{
+  "name": "better-tab-unload",
+  "version": "1.0.1",
+  "private": true,
+  "description": "Chrome MV3 extension that shows a cached screenshot while a discarded tab is restored",
+  "scripts": {
+    "dev": "cd docs && npm run dev",
+    "build": "cd docs && npm run build",
+    "preview": "cd docs && npm run preview",
+    "install:docs": "cd docs && npm install",
+    "check": "node --check background.js && node --check content.js && node --check restore.js && node --check storage.js && node --check options.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "manifest-v3",
+    "tab-discard",
+    "memory-saver",
+    "indexeddb"
+  ],
+  "author": "rennerdo30",
+  "license": "MIT"
+}
